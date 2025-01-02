@@ -1,36 +1,50 @@
-name: Build docker images with kaniko
+name: Build docker images with kaniko and push if needed.
 
 on:
   workflow_call:
-    inputs:
-      registry:
-        required: true
-        type: string
-      images:
-        required: true
-        type: string
-    secrets:
-      username:
-        required: true
-      password:
-        required: true
-      
+
 jobs:
-  deploy:
+  deploy-ghcr:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/metadata-action@v5
+      id: metadata
+      with:
+        images: ghcr.io/${{ github.repository }}
+        tags: |
+          type=ref,event=tag
+    - uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - uses: int128/kaniko-action@v1
+      with:
+        push: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+        tags: ${{ steps.metadata.outputs.tags }}
+        labels: ${{ steps.metadata.outputs.labels }}
+
+  deploy-dockerio:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     - uses: docker/metadata-action@v5
       id: metadata
       with:
-        images: ${{ inputs.images }}
+        images: docker.io/${{ github.repository }}
+        tags: |
+          type=ref,event=tag
     - uses: docker/login-action@v3
       with:
-        registry: ${{ inputs.registry }}
-        username: ${{ secrets.username }}
-        password: ${{ secrets.password }}
+        registry: docker.io
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_TOKEN }}
     - uses: int128/kaniko-action@v1
       with:
-        push: false
+        push: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
         tags: ${{ steps.metadata.outputs.tags }}
         labels: ${{ steps.metadata.outputs.labels }}

@@ -1,24 +1,15 @@
-name: Build docker images with kaniko
+name: Build docker images with reusable actions.
 
 on:
   push:
     branches: [ main ]
-    tags:
-      - '*'
+  pull_request:
+    branches: [ main ]
+
 
 jobs:
-  deploy-ghcr:
-    uses: liofal/action/workflows/build_and_deploy.yml
-    with:
-      registry: ghcr.io
-      username: ${{ github.actor }}
-      password: ${{ secrets.GITHUB_TOKEN }}
-      images: ghcr.io/${{ github.repository }}
-
-  deploy-dockerio:
-    uses: liofal/action/workflows/build_and_deploy.yml
-    with:
-      registry: docker.io
-      username: ${{ secrets.DOCKER_USERNAME }}
-      password: ${{ secrets.DOCKER_TOKEN }}
-      images: docker.io/${{ github.repository }}
+  deploy:
+    uses: liofal/actions/.github/workflows/build_and_deploy.yml@main
+    permissions:
+      packages: write
+    secrets: inherit
