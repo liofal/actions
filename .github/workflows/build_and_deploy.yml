@@ -1,0 +1,36 @@
+name: Build docker images with kaniko
+
+on:
+  workflow_call:
+    inputs:
+      registry:
+        required: true
+        type: string
+      images:
+        required: true
+        type: string
+    secrets:
+      username:
+        required: true
+      password:
+        required: true
+      
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/metadata-action@v5
+      id: metadata
+      with:
+        images: ${{ inputs.images }}
+    - uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ secrets.username }}
+        password: ${{ secrets.password }}
+    - uses: int128/kaniko-action@v1
+      with:
+        push: false
+        tags: ${{ steps.metadata.outputs.tags }}
+        labels: ${{ steps.metadata.outputs.labels }}
