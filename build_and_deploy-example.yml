@@ -1,15 +1,62 @@
-name: Build docker images with reusable actions.
+# Example workflow in a repository USING the reusable actions from liofal/actions
+# This file demonstrates how to call semantic_release, build_and_deploy, and publish_helm.
+
+name: Example Release, Build, Deploy, and Publish Helm
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
+    branches: [ main ] # Or your default branch
 
 jobs:
-  deploy:
+  # Job 1: Run the reusable workflow for semantic-release
+  release:
+    name: Create Release
+    # Assumes this repo is using the reusable workflows from the 'main' branch of liofal/actions
+    uses: liofal/actions/.github/workflows/semantic_release.yml@main
+    with:
+      # IMPORTANT: Only include 'semantic-release-helm' if this specific repository
+      # actually contains a Helm chart that needs its version updated by semantic-release.
+      # If this repo does NOT have a Helm chart, remove the 'semantic-release-helm' line below.
+      semantic-release-plugins: >-
+        @semantic-release/commit-analyzer
+        @semantic-release/release-notes-generator
+        semantic-release-helm # REMOVE THIS LINE IF NO HELM CHART IN THIS REPO
+        @semantic-release/git
+        @semantic-release/github
+    permissions:
+      contents: write # semantic-release needs write access to push tags/releases & update Chart.yaml via helm plugin
+      issues: write
+      pull-requests: write
+    secrets: inherit # Pass GITHUB_TOKEN
+
+  # Job 2: Run the reusable workflow for build and deploy (if release occurred)
+  build_deploy:
+    name: Build and Deploy Docker Image
+    needs: release
+    # Condition: Only run if the release job actually published a new version
+    if: needs.release.outputs.published == '1'
     uses: liofal/actions/.github/workflows/build_and_deploy.yml@main
     permissions:
-      packages: write
-    secrets: inherit
+      contents: read   # build_and_deploy needs read access for checkout
+      packages: write  # build_and_deploy needs write access to push docker images
+    with:
+      # Pass the version tag (e.g., v1.2.3) from the release job
+      tag: ${{ needs.release.outputs.version }}
+    secrets: inherit # Pass GITHUB_TOKEN and potentially DOCKER_USERNAME/DOCKER_TOKEN
+
+  # Job 3: Run the reusable workflow for Helm publish (if release occurred AND chart exists)
+  publish_helm_chart:
+    name: Publish Helm Chart
+    needs: release
+    # Condition: Only run if release happened AND Chart.yaml exists in this repo
+    # Adjust the path 'kube/charts/Chart.yaml' if your chart is located elsewhere.
+    if: needs.release.outputs.published == '1' && hashFiles('kube/charts/Chart.yaml') != ''
+    uses: liofal/actions/.github/workflows/publish_helm.yml@main
+    permissions:
+      contents: read   # publish_helm needs read access for checkout
+      packages: write  # publish_helm needs write access to push package
+    with:
+      # Pass the version tag (e.g., v1.2.3) from the release job
+      tag: ${{ needs.release.outputs.version }}
+      # chart_path: 'kube/charts' # Optional: Only needed if chart is not at the default path 'kube/charts'
+    secrets: inherit # Pass GITHUB_TOKEN

@@ -1,0 +1,60 @@
+name: Publish Helm Chart to GHCR
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Git tag (e.g., v1.2.3) to check out. Helm chart version uses Chart.yaml.'
+        required: true
+        type: string
+      chart_path:
+        description: 'Path to the Helm chart directory relative to the repository root'
+        required: false
+        default: 'kube/charts'
+        type: string
+    # No outputs needed for this specific workflow
+
+jobs:
+  publish-helm:
+    name: Publish Helm Chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read    # Needed to checkout the code
+      packages: write   # Needed to push Helm chart to GHCR
+
+    steps:
+      - name: Checkout code at release tag
+        uses: actions/checkout@v4
+        with:
+          # Use the input tag directly, as it should now have the 'v' prefix
+          ref: ${{ inputs.tag }}
+
+      # Note: We assume the calling workflow already verified the chart exists
+      # before calling this reusable workflow.
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.4' # Pinning version is safer than 'latest'
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # Assumes GITHUB_TOKEN is passed via secrets: inherit
+
+      - name: Package Helm chart
+        id: package
+        run: |
+          helm package ${{ inputs.chart_path }}
+          # Find the generated tgz file (e.g., mychart-0.1.0.tgz)
+          chart_tgz=$(ls *.tgz | head -n 1)
+          echo "chart_package=$chart_tgz" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Push Helm chart to GHCR
+        # Construct OCI URL using the dynamic repository name from the calling context
+        # Helm push uses the version from the Chart.yaml (which should be v-less)
+        run: helm push ${{ steps.package.outputs.chart_package }} oci://ghcr.io/${{ github.repository }}
+        shell: bash
