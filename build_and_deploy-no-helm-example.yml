@@ -1,0 +1,48 @@
+# Example workflow in a repository USING the reusable actions from liofal/actions
+# This file demonstrates how to call semantic_release and build_and_deploy
+# for a project that DOES NOT have Helm charts.
+
+name: Example Release, Build, and Deploy (No Helm)
+
+on:
+  push:
+    branches: [ main ] # Or your default branch
+
+jobs:
+  # Job 1: Run the reusable workflow for semantic-release
+  release:
+    name: Create Release
+    # Assumes this repo is using the reusable workflows from the 'main' branch of liofal/actions
+    uses: liofal/actions/.github/workflows/semantic_release.yml@main
+    with:
+      # IMPORTANT: This project does NOT have a Helm chart, so 'semantic-release-helm'
+      # is OMITTED from the list below. Including it would cause errors.
+      semantic-release-plugins: >-
+        @semantic-release/commit-analyzer
+        @semantic-release/release-notes-generator
+        # semantic-release-helm # Omitted intentionally
+        @semantic-release/git
+        @semantic-release/github
+    permissions:
+      contents: write # semantic-release needs write access to push tags/releases
+      issues: write
+      pull-requests: write
+    secrets: inherit # Pass GITHUB_TOKEN
+
+  # Job 2: Run the reusable workflow for build and deploy (if release occurred)
+  build_deploy:
+    name: Build and Deploy Docker Image
+    needs: release
+    # Condition: Only run if the release job actually published a new version
+    if: needs.release.outputs.published == '1'
+    uses: liofal/actions/.github/workflows/build_and_deploy.yml@main
+    permissions:
+      contents: read   # build_and_deploy needs read access for checkout
+      packages: write  # build_and_deploy needs write access to push docker images
+    with:
+      # Pass the version tag (e.g., v1.2.3) from the release job
+      tag: ${{ needs.release.outputs.version }}
+    secrets: inherit # Pass GITHUB_TOKEN and potentially DOCKER_USERNAME/DOCKER_TOKEN
+
+  # Job 3 (Helm Publish) is intentionally OMITTED because this project
+  # does not have Helm charts to publish.

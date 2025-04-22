@@ -2,49 +2,111 @@ name: Build docker images with kaniko and push if needed.
 
 on:
   workflow_call:
+    inputs:
+      tag:
+        description: 'Git tag (e.g., v1.2.3) to check out and base image tags on'
+        required: false # Keep optional for flexibility, but push depends on it
+        type: string
 
 jobs:
   deploy-ghcr:
     runs-on: ubuntu-latest
     permissions:
-      packages: write
+      contents: read   # Needed for checkout
+      packages: write  # Needed to push images
     steps:
-    - uses: actions/checkout@v4
-    - uses: docker/metadata-action@v5
-      id: metadata
-      with:
-        images: ghcr.io/${{ github.repository }}
-        tags: |
-          type=ref,event=tag
-    - uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout code at release tag
+        # Only checkout specific tag if 'tag' input is provided
+        if: inputs.tag != ''
+        uses: actions/checkout@v4
+        with:
+          # Use the input tag directly, as it should now have the 'v' prefix
+          ref: ${{ inputs.tag }}
 
-    - uses: int128/kaniko-action@v1
-      with:
-        push: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
-        tags: ${{ steps.metadata.outputs.tags }}
-        labels: ${{ steps.metadata.outputs.labels }}
+      # Checkout default branch if no tag is provided (e.g., for non-release builds)
+      - name: Checkout default branch
+        if: inputs.tag == ''
+        uses: actions/checkout@v4
+
+      - name: Docker meta for GHCR
+        id: metadata_ghcr
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            # Use semver type to extract version number (strips 'v')
+            type=semver,pattern={{version}},value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+            # Add 'latest' tag if the input tag looks like a release (e.g., vX.Y.Z)
+            type=raw,value=latest,enable=${{ inputs.tag != '' && !contains(inputs.tag, '-') }}
+            # Optional: Add a fallback tag for non-release builds if needed
+            # type=sha,prefix=main-,enable=${{ inputs.tag == '' }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # Assumes GITHUB_TOKEN is passed via secrets: inherit
+
+      - name: Build and push Docker image to GHCR
+        uses: int128/kaniko-action@v1
+        with:
+          # Push only when a tag input is provided (meaning a release happened)
+          push: ${{ inputs.tag != '' }}
+          tags: ${{ steps.metadata_ghcr.outputs.tags }}
+          labels: ${{ steps.metadata_ghcr.outputs.labels }}
+          # context: . # Default is repo root
+          # file: ./Dockerfile # Default Dockerfile path
 
   deploy-dockerio:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read   # Needed for checkout
+      # packages: write # Not needed for Docker Hub push itself
     steps:
-    - uses: actions/checkout@v4
-    - uses: docker/metadata-action@v5
-      id: metadata
-      with:
-        images: docker.io/${{ github.repository }}
-        tags: |
-          type=ref,event=tag
-    - uses: docker/login-action@v3
-      with:
-        registry: docker.io
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_TOKEN }}
-    - uses: int128/kaniko-action@v1
-      with:
-        push: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
-        tags: ${{ steps.metadata.outputs.tags }}
-        labels: ${{ steps.metadata.outputs.labels }}
+      - name: Checkout code at release tag
+        # Only checkout specific tag if 'tag' input is provided
+        if: inputs.tag != ''
+        uses: actions/checkout@v4
+        with:
+          # Use the input tag directly, as it should now have the 'v' prefix
+          ref: ${{ inputs.tag }}
+
+      # Checkout default branch if no tag is provided (e.g., for non-release builds)
+      - name: Checkout default branch
+        if: inputs.tag == ''
+        uses: actions/checkout@v4
+
+      - name: Docker meta for Docker Hub
+        id: metadata_dockerio
+        uses: docker/metadata-action@v5
+        with:
+          # Construct Docker Hub image name (adjust if your naming differs)
+          images: docker.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+          tags: |
+            # Use semver type to extract version number (strips 'v')
+            type=semver,pattern={{version}},value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+            # Add 'latest' tag if the input tag looks like a release (e.g., vX.Y.Z)
+            type=raw,value=latest,enable=${{ inputs.tag != '' && !contains(inputs.tag, '-') }}
+            # Optional: Add a fallback tag for non-release builds if needed
+            # type=sha,prefix=main-,enable=${{ inputs.tag == '' }}
+
+      - name: Login to Docker Hub
+        # Only run login step if tag is provided. Action will fail if secrets are missing.
+        if: inputs.tag != ''
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_USERNAME }} # Assumes passed via secrets: inherit
+          password: ${{ secrets.DOCKER_TOKEN }} # Assumes passed via secrets: inherit
+
+      - name: Build and push Docker image to Docker Hub
+        # Only run push step if tag is provided. Action will fail if secrets are missing/login failed.
+        if: inputs.tag != ''
+        uses: int128/kaniko-action@v1
+        with:
+          push: true # We push if this step runs
+          tags: ${{ steps.metadata_dockerio.outputs.tags }}
+          labels: ${{ steps.metadata_dockerio.outputs.labels }}
+          # context: . # Default is repo root
+          # file: ./Dockerfile # Default Dockerfile path

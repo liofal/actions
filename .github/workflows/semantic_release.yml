@@ -1,0 +1,104 @@
+name: Universal Semantic Release
+
+on:
+  workflow_call:
+    # Define outputs for the entire reusable workflow
+    outputs:
+      published:
+        description: "Whether a new release was published ('1' for true, '0' for false)"
+        value: ${{ jobs.release.outputs.new_release_published }}
+      version:
+        description: "The new version tag (e.g., v1.2.3) if published, otherwise empty" # Correct description with 'v'
+        value: ${{ jobs.release.outputs.new_release_version }}
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        default: 'lts/*'
+        type: string
+      semantic-release-plugins:
+        description: 'Space-separated list of semantic-release plugins to install'
+        required: false
+        # Default to common plugins
+        default: '@semantic-release/commit-analyzer @semantic-release/release-notes-generator @semantic-release/git @semantic-release/github'
+        type: string
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    # Define outputs for the job
+    outputs:
+      new_release_published: ${{ steps.publish.outputs.published }}
+      new_release_version: ${{ steps.publish.outputs.version }}
+    permissions:
+      contents: write # To push tags, releases
+      issues: write # To comment on issues
+      pull-requests: write # To comment on PRs
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required by semantic-release
+          persist-credentials: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install semantic-release and plugins
+        run: npm install --no-save semantic-release ${{ inputs.semantic-release-plugins }}
+
+      - name: Run semantic-release
+        id: publish # Give the step an ID
+        # Capture output, check for success message, set outputs
+        run: |
+          output=$(npx semantic-release)
+          echo "--- Semantic Release Output ---"
+          echo "$output"
+          echo "--- End Semantic Release Output ---"
+
+          published_status="false"
+          version_tag=""
+
+          # Check for the success message indicating a release was published
+          if echo "$output" | grep -q "Published release"; then
+            echo "Found 'Published release' message."
+            published_status="true"
+            # Extract version number (adjust regex if output format differs)
+            # Use grep -o first, then check if result is not empty
+             # Extract version number (e.g., 1.2.3)
+             version_match=$(echo "$output" | grep -oP 'Published release \K[0-9]+\.[0-9]+\.[0-9]+')
+             if [[ -n "$version_match" ]]; then
+               # Output version WITH 'v' prefix (matching Git tag)
+               version_tag="v$version_match" # Add 'v' prefix here
+               echo "Extracted version: $version_tag"
+             else
+               echo "WARNING: Could not extract version number despite finding publish message."
+              # Decide if we should still mark as published=true? Yes, the release happened.
+              # version_tag will remain empty, which might cause issues downstream.
+            fi
+          else
+            echo "Did not find 'Published release' message."
+          fi
+
+          if [[ "$published_status" == "true" ]]; then
+            echo "Setting output published=1"
+            echo "published=1" >> $GITHUB_OUTPUT
+          else
+            echo "Setting output published=0"
+            echo "published=0" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Setting output version=$version_tag"
+          echo "version=$version_tag" >> $GITHUB_OUTPUT
+
+          if [[ "$published_status" == "true" ]]; then
+            echo "Successfully published new version: $version_tag"
+          else
+            echo "No new release published."
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
