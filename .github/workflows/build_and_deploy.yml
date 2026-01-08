@@ -7,6 +7,11 @@ on:
         description: 'Git tag (e.g., v1.2.3) to check out and base image tags on'
         required: false # Keep optional for flexibility, but push depends on it
         type: string
+      push_to_dockerhub:
+        description: 'Whether to also push images to Docker Hub'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   deploy-ghcr:
@@ -59,6 +64,7 @@ jobs:
           # file: ./Dockerfile # Default Dockerfile path
 
   deploy-dockerio:
+    if: inputs.push_to_dockerhub && inputs.tag != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read   # Needed for checkout
@@ -92,8 +98,6 @@ jobs:
             # type=sha,prefix=main-,enable=${{ inputs.tag == '' }}
 
       - name: Login to Docker Hub
-        # Only run login step if tag is provided. Action will fail if secrets are missing.
-        if: inputs.tag != ''
         uses: docker/login-action@v3
         with:
           registry: docker.io
@@ -101,8 +105,6 @@ jobs:
           password: ${{ secrets.DOCKER_TOKEN }} # Assumes passed via secrets: inherit
 
       - name: Build and push Docker image to Docker Hub
-        # Only run push step if tag is provided. Action will fail if secrets are missing/login failed.
-        if: inputs.tag != ''
         uses: int128/kaniko-action@v1
         with:
           push: true # We push if this step runs
